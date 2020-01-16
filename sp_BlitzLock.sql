@@ -20,8 +20,8 @@ ALTER PROCEDURE dbo.sp_BlitzLock
 	@VersionDate DATETIME = NULL OUTPUT,
     @VersionCheckMode BIT = 0,
 	@OutputDatabaseName NVARCHAR(256) = NULL ,
-    @OutputSchemaName NVARCHAR(256) = 'dbo' ,
-    @OutputTableName NVARCHAR(256) = NULL 
+    @OutputSchemaName NVARCHAR(256) = 'dbo' ,  --dito as below
+    @OutputTableName NVARCHAR(256) = 'BlitzLock'  --put a standard here no need to check later in the script
 )
 WITH RECOMPILE
 AS
@@ -196,18 +196,31 @@ You need to use an Azure storage account, and the path has to look like this: ht
 				END
 			ELSE
 				BEGIN
-					SELECT
-					@OutputDatabaseName = QUOTENAME(@OutputDatabaseName),
-					@OutputTableName = QUOTENAME(ISNULL(@OutputTableName,'BlitzLock')),  --use isnull if user does supply information fill it for user.
-					@OutputSchemaName = QUOTENAME(@OutputSchemaName) --alredy set to dbo as standard if user does not change.
 					set @OutputDatabaseCheck = 0
 					select @StringToExecute = N'select @r = name from ' + '' + @OutputDatabaseName + 
 					'' + '.sys.objects where type_desc=''USER_TABLE'' and name=' + '''' + @OutputTableName + '''',
-					@StringToExecuteParams = N'@OutputTableName NVARCHAR(200)
-					,@OutputDatabaseName NVARCHAR(200),
-					@r NVARCHAR(200) OUTPUT'
+					@StringToExecuteParams = N'@OutputTableName NVARCHAR(200),@OutputDatabaseName NVARCHAR(200),@r NVARCHAR(200) OUTPUT'
+					exec sp_executesql @StringToExecute,@StringToExecuteParams,@OutputTableName,@OutputDatabaseName,@r OUTPUT
+					--put covers around all before.
+					SELECT @OutputDatabaseName = QUOTENAME(@OutputDatabaseName),
+					@OutputTableName = QUOTENAME(@OutputTableName), 
+					@OutputSchemaName = QUOTENAME(@OutputSchemaName) 
+					if(@r is null) --if it is null there is no table, create it from above execution
+					BEGIN
+						select @StringToExecute = N'use ' + @OutputDatabaseName + ';create table ' + @OutputSchemaName + '.' + @OutputTableName + ' (
+							client_app NVARCHAR(256),host_name NVARCHAR(256),login_name NVARCHAR(256),isolation_level NVARCHAR(256),
+							lock_mode NVARCHAR(256),transaction_count bigint,last_batch_completed datetime,last_batch_started datetime,
+							last_tran_started datetime,transaction_name NVARCHAR(256),wait_time BIGINT,wait_resource NVARCHAR(256),log_used BIGINT,
+							priority smallint,id NVARCHAR(256),Database_Name NVARCHAR(256),event_date datetime,victim_id NVARCHAR(256),deadlock_graph XML,
+							waiter_id NVARCHAR(256),waiter_mode NVARCHAR(256),owner_id NVARCHAR(256),owner_mode NVARCHAR(256),object_name NVARCHAR(256),
+							owner_activity NVARCHAR(256),owner_spilling NVARCHAR(256),owner_waiter_type NVARCHAR(256),owner_waiter_activity NVARCHAR(256),
+							owner_merging NVARCHAR(256),owner_waiting_to_close NVARCHAR(256),waiter_waiter_type NVARCHAR(256),waiter_owner_activity NVARCHAR(256),
+							waiter_waiter_activity NVARCHAR(256),waiter_merging NVARCHAR(256))',
+							@StringToExecuteParams = N'@OutputTableName NVARCHAR(200),@OutputDatabaseName NVARCHAR(200)'
+							exec sp_executesql @StringToExecute, @StringToExecuteParams,@OutputTableName,@OutputDatabaseName
 
-	
+					END
+					
 				END
 		END
         
