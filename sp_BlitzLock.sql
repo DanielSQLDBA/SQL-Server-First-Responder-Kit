@@ -1079,7 +1079,10 @@ You need to use an Azure storage account, and the path has to look like this: ht
         --CREATE CLUSTERED INDEX cx_whatever ON #deadlock_process (event_date, id);
         --CREATE CLUSTERED INDEX cx_whatever ON #deadlock_resource_parallel (event_date, owner_id);
         --CREATE CLUSTERED INDEX cx_whatever ON #deadlock_owner_waiter (event_date, owner_id, waiter_id);
-
+	IF(@OutputDatabaseCheck = 0)
+	BEGIN
+		set @StringToExecute = 'CREATE SYNONYM DeadLockTbl FOR ' + @OutputDatabaseName + '.' + @OutputSchemaName + '.' + @OutputTableName;
+		exec sp_executesql @StringToExecute
         SET @d = CONVERT(VARCHAR(40), GETDATE(), 109);
         RAISERROR('Results 1 %s', 0, 1, @d) WITH NOWAIT;
 		WITH deadlocks
@@ -1184,6 +1187,7 @@ You need to use an Azure storage account, and the path has to look like this: ht
 			 CROSS APPLY (SELECT TOP 1 * FROM  #deadlock_resource_parallel AS drp WHERE drp.owner_id = dp.id AND drp.wait_type = 'e_waitPipeGetRow' ORDER BY drp.event_date) AS caw
 			 WHERE dp.victim_id IS NULL
 			 AND dp.login_name IS NOT NULL)
+		insert into DeadLockTbl
 		SELECT d.deadlock_type,
 			   d.event_date,
 			   DB_NAME(d.database_id) AS database_name,
@@ -1236,6 +1240,8 @@ You need to use an Azure storage account, and the path has to look like this: ht
 		ORDER BY d.event_date, is_victim DESC
 		OPTION ( RECOMPILE );
 
+		drop SYNONYM DeadLockTbl;
+END
 
         SET @d = CONVERT(VARCHAR(40), GETDATE(), 109);
         RAISERROR('Findings %s', 0, 1, @d) WITH NOWAIT;
