@@ -184,7 +184,7 @@ You need to use an Azure storage account, and the path has to look like this: ht
 			finding_group NVARCHAR(100),
 			finding NVARCHAR(4000)
 		);
-		DECLARE @d VARCHAR(40), @StringToExecute NVARCHAR(4000),@StringToExecuteParams NVARCHAR(500),@r NVARCHAR(200);
+		DECLARE @d VARCHAR(40), @StringToExecute NVARCHAR(4000),@StringToExecuteParams NVARCHAR(500),@r NVARCHAR(200),@OutputTableFindings NVARCHAR(100);
 		DECLARE @OutputDatabaseCheck BIT;
 		SET @d = CONVERT(VARCHAR(40), GETDATE(), 109);
 		if(@OutputDatabaseName is not null)
@@ -196,19 +196,17 @@ You need to use an Azure storage account, and the path has to look like this: ht
 				END
 			ELSE
 				BEGIN
-					
 					set @OutputDatabaseCheck = 0
 					select @StringToExecute = N'select @r = name from ' + '' + @OutputDatabaseName + 
 					'' + '.sys.objects where type_desc=''USER_TABLE'' and name=' + '''' + @OutputTableName + '''',
-					@StringToExecuteParams = N'@OutputTableName NVARCHAR(200),@OutputDatabaseName NVARCHAR(200),@r NVARCHAR(200) OUTPUT'
-					exec sp_executesql @StringToExecute,@StringToExecuteParams,@OutputTableName,@OutputDatabaseName,@r OUTPUT
+					@StringToExecuteParams = N'@OutputDatabaseName NVARCHAR(200),@OutputTableName NVARCHAR(200),@r NVARCHAR(200) OUTPUT'
+					exec sp_executesql @StringToExecute,@StringToExecuteParams,@OutputDatabaseName,@OutputTableName,@r OUTPUT
 					--put covers around all before.
 					SELECT @OutputDatabaseName = QUOTENAME(@OutputDatabaseName),
 					@OutputTableName = QUOTENAME(@OutputTableName), 
 					@OutputSchemaName = QUOTENAME(@OutputSchemaName) 
 					if(@r is null) --if it is null there is no table, create it from above execution
 					BEGIN
-						
 						select @StringToExecute = N'use ' + @OutputDatabaseName + ';create table ' + @OutputSchemaName + '.' + @OutputTableName + ' (
 							deadlock_type NVARCHAR(256),
 							event_date datetime,
@@ -243,8 +241,27 @@ You need to use an Azure storage account, and the path has to look like this: ht
 							waiter_spilling NVARCHAR(256),
 							waiter_waiting_to_close NVARCHAR(256),
 							deadlock_graph XML)',
-							@StringToExecuteParams = N'@OutputTableName NVARCHAR(200),@OutputDatabaseName NVARCHAR(200)'
-							exec sp_executesql @StringToExecute, @StringToExecuteParams,@OutputTableName,@OutputDatabaseName
+							@StringToExecuteParams = N'@OutputDatabaseName NVARCHAR(200),@OutputSchemaName NVARCHAR(100),@OutputTableName NVARCHAR(200)'
+							exec sp_executesql @StringToExecute, @StringToExecuteParams,@OutputDatabaseName,@OutputSchemaName,@OutputTableName
+							--table created.
+							select @StringToExecute = N'select @r = name from ' + '' + @OutputDatabaseName + 
+								'' + '.sys.objects where type_desc=''USER_TABLE'' and name=''BlitzLockFindings''',
+							@StringToExecuteParams = N'@OutputDatabaseName NVARCHAR(200),@r NVARCHAR(200) OUTPUT'
+							exec sp_executesql @StringToExecute,@StringToExecuteParams,@OutputDatabaseName,@r OUTPUT
+							if(@r is null) --if table does not excist
+							BEGIN
+								select @OutputTableFindings=N'[BlitzLockFindings]',
+								@StringToExecute = N'use ' + @OutputDatabaseName + ';create table ' + @OutputSchemaName + '.' + @OutputTableFindings + ' (
+								check_id INT, 
+								database_name NVARCHAR(256), 
+								object_name NVARCHAR(1000), 
+								finding_group NVARCHAR(100), 
+								finding NVARCHAR(4000))',
+								@StringToExecuteParams = N'@OutputDatabaseName NVARCHAR(200),@OutputSchemaName NVARCHAR(100),@OutputTableFindings NVARCHAR(200)'
+								
+								RAISERROR('create table statement %s', 0, 1, @StringToExecute) WITH NOWAIT;
+								exec sp_executesql @StringToExecute, @StringToExecuteParams, @OutputDatabaseName,@OutputSchemaName,@OutputTableFindings
+							END
 
 					END
 					
@@ -1301,7 +1318,23 @@ You need to use an Azure storage account, and the path has to look like this: ht
 		ORDER BY d.event_date, is_victim DESC
 		OPTION ( RECOMPILE );
 		
-		drop SYNONYM DeadLockTbl;
+		drop SYNONYM DeadLockTbl; --done insert into blitzlock table going to insert into findings table first create synonym.
+
+
+		set @StringToExecute = 'CREATE SYNONYM DeadlockFindings FOR ' + @OutputDatabaseName + '.' + @OutputSchemaName + '.' + @OutputTableFindings ; 
+		exec sp_executesql @StringToExecute, N'@OutputDatabaseName NVARCHAR(200),@OutputSchemaName NVARCHAR(100), @OutputTableFindings NVARCHAR(200)',
+		@OutputDatabaseName,@OutputSchemaName,@OutputTableFindings
+
+		SET @d = CONVERT(VARCHAR(40), GETDATE(), 109);
+        RAISERROR('Findings %s', 0, 1, @d) WITH NOWAIT;
+
+		Insert into DeadlockFindings
+		SELECT df.check_id, df.database_name, df.object_name, df.finding_group, df.finding
+		FROM #deadlock_findings AS df
+		ORDER BY df.check_id
+		OPTION ( RECOMPILE );
+
+		drop SYNONYM DeadlockFindings; --done with inserting.
 END
 ELSE  --Output to database is not set output to client app
 	BEGIN
@@ -1460,17 +1493,18 @@ ELSE  --Output to database is not set output to client app
 			AND (d.login_name = @LoginName OR @LoginName IS NULL)
 			ORDER BY d.event_date, is_victim DESC
 			OPTION ( RECOMPILE );
+			
+			SET @d = CONVERT(VARCHAR(40), GETDATE(), 109);
+			RAISERROR('Findings %s', 0, 1, @d) WITH NOWAIT;
+			SELECT df.check_id, df.database_name, df.object_name, df.finding_group, df.finding
+			FROM #deadlock_findings AS df
+			ORDER BY df.check_id
+			OPTION ( RECOMPILE );
 
-		END
-        SET @d = CONVERT(VARCHAR(40), GETDATE(), 109);
-        RAISERROR('Findings %s', 0, 1, @d) WITH NOWAIT;
-		SELECT df.check_id, df.database_name, df.object_name, df.finding_group, df.finding
-		FROM #deadlock_findings AS df
-		ORDER BY df.check_id
-		OPTION ( RECOMPILE );
+			SET @d = CONVERT(VARCHAR(40), GETDATE(), 109);
+			RAISERROR('Done %s', 0, 1, @d) WITH NOWAIT;
+		END --done with output to client app.
 
-        SET @d = CONVERT(VARCHAR(40), GETDATE(), 109);
-        RAISERROR('Done %s', 0, 1, @d) WITH NOWAIT;
 
 
         IF @Debug = 1
